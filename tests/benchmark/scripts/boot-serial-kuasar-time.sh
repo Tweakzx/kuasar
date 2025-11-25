@@ -14,10 +14,10 @@
 # limitations under the License.
 
 # $num is the number of container
-num=50
+num=100
 workdir=$(dirname "$(pwd)")
 RAW=${workdir}/data/raw
-TIME_DAT=${RAW}/boot-serial-1000-kuasar-time.dat
+TIME_DAT=${RAW}/boot-serial-100-kuasar-time.dat
 mkdir -p $workdir/json/container
 mkdir -p $workdir/json/pod
 
@@ -37,6 +37,31 @@ function getTiming(){
     echo "$time"
 }
 
+# Clean up test resources: stop and remove containers starting with testcontainer and pods starting with testpod
+function cleanup_test_resources() {
+    # Stop and remove containers with name starting with testcontainer
+    local test_containers=$(crictl ps -a --name 'testcontainer.*' -q)
+    if [ -n "$test_containers" ]; then
+        crictl stop $test_containers >/dev/null 2>&1
+        # Wait for containers to stop
+        for _ in {1..5}; do
+            local running_containers=$(crictl ps --name 'testcontainer.*' -q)
+            if [ -z "$running_containers" ]; then
+                break
+            fi
+            sleep 1
+        done
+        crictl rm -f $test_containers >/dev/null 2>&1
+    fi
+
+    # Remove pods with name starting with testpod
+    local test_pods=$(crictl pods --name 'testpod.*' -q)
+    if [ -n "$test_pods" ]; then
+        crictl rmp -f $test_pods >/dev/null 2>&1
+    fi
+}
+
+
 once_test(){
      i=$1
 
@@ -44,7 +69,7 @@ once_test(){
    cat > $workdir/json/container/container_$i.json << EOF
 {
         "metadata": {
-             "name": "testcontainer"
+             "name": "testcontainer$i"
         },
         "image": {
                 "image": "docker.io/library/ubuntu:latest"
@@ -70,7 +95,8 @@ EOF
 {
         "metadata": {
                 "name": "testpod$i",
-                "namespace": "docker2cric"
+                "namespace": "docker2cric",
+                "uid": "$(uuidgen)"
         },
         "log_directory": "/tmp",
         "dns_config": {},
@@ -93,7 +119,7 @@ EOF
 # Start timing
 start_time=$(date +%s.%N)
 
-    crictl run -r kuasar --no-pull $workdir/json/container/container_$i.json $workdir/json/pod/pod_$i.json 
+    crictl run -r kuasar-vmm --no-pull $workdir/json/container/container_$i.json $workdir/json/pod/pod_$i.json 
     
 # Wait for all the containers to finish starting
 a=`crictl ps | grep testcontainer | wc -l`
@@ -113,9 +139,7 @@ echo "${boot_time}" >> ${TIME_DAT}
 
 }
 
-# Kill all pods to prevent interference with testing
-crictl rm -f -a
-crictl rmp -f -a
+cleanup_test_resources
 
 for((i=0;i<$num;i++))
 do

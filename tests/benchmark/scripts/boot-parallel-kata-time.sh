@@ -37,11 +37,34 @@ function getTiming(){
     echo "$time"
 }
 
+# Clean up test resources: stop and remove containers starting with testcontainer and pods starting with testpod
+function cleanup_test_resources() {
+    # Stop and remove containers with name starting with testcontainer
+    local test_containers=$(crictl ps -a --name 'testcontainer.*' -q)
+    if [ -n "$test_containers" ]; then
+        crictl stop $test_containers >/dev/null 2>&1
+        # Wait for containers to stop
+        for _ in {1..5}; do
+            local running_containers=$(crictl ps --name 'testcontainer.*' -q)
+            if [ -z "$running_containers" ]; then
+                break
+            fi
+            sleep 1
+        done
+        crictl rm -f $test_containers >/dev/null 2>&1
+    fi
+
+    # Remove pods with name starting with testpod
+    local test_pods=$(crictl pods --name 'testpod.*' -q)
+    if [ -n "$test_pods" ]; then
+        crictl rmp -f $test_pods >/dev/null 2>&1
+    fi
+}
+
 once_test(){
 
 # Kill all pods to prevent interference with testing
-crictl rm -f -a
-crictl rmp -f -a
+cleanup_test_resources
 
 # Create $PARALLEL container.json and pod.json
 for((i=0;i<$PARALLEL;i++))
@@ -49,7 +72,7 @@ do
     cat > $workdir/json/container/container_$i.json << EOF
 {
         "metadata": {
-             "name": "testcontainer"
+             "name": "testcontainer$i"
         },
         "image": {
                 "image": "docker.io/library/ubuntu:latest"
@@ -75,7 +98,8 @@ EOF
 {
         "metadata": {
                 "name": "testpod$i",
-                "namespace": "docker2cric"
+                "namespace": "docker2cric",
+                "uid": "$(uuidgen)"
         },
         "log_directory": "/tmp",
         "dns_config": {},
